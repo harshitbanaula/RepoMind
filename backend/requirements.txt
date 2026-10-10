@@ -1,0 +1,48 @@
+
+# API and configuration
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+python-multipart
+sse-starlette
+
+# Database and migrations
+sqlalchemy[asyncio]
+asyncpg
+alembic
+psycopg[binary]
+
+# Redis and observability
+redis
+structlog
+
+# Security and authentication
+cryptography
+PyJWT[crypto]
+pwdlib[argon2]
+
+# AI and agent orchestration
+langchain
+langchain-core
+langchain-groq
+langgraph
+langgraph-checkpoint-postgres
+langchain-mcp-adapters
+mcp
+
+# Vector search and retrieval
+qdrant-client
+rank-bm25
+tiktoken
+
+# Code parsing
+tree-sitter
+tree-sitter-language-pack
+GitPython
+
+# Testing
+pytest
+pytest-asyncio
