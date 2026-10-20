@@ -8,6 +8,7 @@ python-dotenv
 httpx
 python-multipart
 sse-starlette
+aiosqlite
 
 # Database and migrations
 sqlalchemy[asyncio]
@@ -37,6 +38,7 @@ mcp
 qdrant-client
 rank-bm25
 tiktoken
+fastembed
 
 # Code parsing
 tree-sitter

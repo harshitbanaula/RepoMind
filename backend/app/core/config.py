@@ -28,7 +28,15 @@ class Settings(BaseSettings):
     mcp_github_server_cmd: str = "python -m app.mcp_servers.github_server"
     mcp_repo_search_server_cmd: str = "python -m app.mcp_servers.repo_search_server"
 
-
+    # RAG
+    repos_root: str = "/app/.repos"
+    indexes_root: str = "/app/.indexes"
+    embed_model: str = "BAAI/bge-small-en-v1.5"
+    embed_dim: int = 384
+    chunk_max_lines: int = 120
+    chunk_min_lines: int = 4
+    max_file_bytes: int = 500_000
+    
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

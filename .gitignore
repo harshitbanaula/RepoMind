@@ -7,3 +7,55 @@ node_modules/
 .next/
 pgdata/
 .qdrant/
+
+# ─── Phase 2: RAG artefacts
+# Cloned repos (per-user, per-repo working copies)
+backend/.repos/
+
+# BM25 pickles (per-user, per-repo)
+backend/.indexes/
+
+# FastEmbed model cache (~40MB per model, survives rebuilds via bind mount)
+backend/.cache/
+.cache/
+
+# Qdrant local (if you ever switch back from Cloud)
+.qdrant/
+qdrant_storage/
+
+# Local test DBs
+*.db
+*.db-journal
+test.db
+backend/test.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node (for Phase 7, added now so it doesn't get committed later)
+node_modules/
+.next/
+out/
+frontend/.env.local
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

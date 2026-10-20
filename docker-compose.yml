@@ -3,13 +3,17 @@ services:
     build: ./backend
     env_file: .env
     ports: ["8000:8000"]
+    volumes:
+      - ./backend/.repos:/app/.repos
+      - ./backend/.indexes:/app/.indexes
+      - ./backend/.cache:/app/.cache
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
-      qdrant: { condition: service_started }
+    environment:
+      - FASTEMBED_CACHE_PATH=/app/.cache/fastembed
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
-
+      sh -c "mkdir -p /app/.repos /app/.indexes /app/.cache/fastembed && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
   postgres:
     image: postgres:16-alpine
     environment:
