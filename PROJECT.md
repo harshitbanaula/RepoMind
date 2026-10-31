@@ -2,22 +2,21 @@
 
 ## Evidence and scope
 
-This guide describes the tracked repository at the `feature/mcp-servers` branch tip (`da3cc7d`). The commit history records three implementation increments. The source also refers explicitly to Phase 6 (replacing the development-user shim) and Phase 7 (frontend-related ignore rules), but does not contain a formal phase plan. Accordingly, Phases 4 and 5 below are recommended from the current code, and Phase 6 and 7 are described only to the extent supported by repository evidence. Proposed work is not presented as already approved or implemented.
+This guide describes the tracked repository at branch `feature/mcp-servers`, commit `da3cc7d`, and incorporates the supplied Phase 4-8 roadmap. Repository history confirms Phases 1-3 as implemented. Phases 4-8 are plans, not existing code. Product and deployment decisions in those future phases must be verified before implementation where noted.
 
 ## Project overview
 
-RepoMind is a Python backend for repository-aware code assistance. It can connect a GitHub repository, clone and index its source, retrieve relevant code using lexical and vector search, and stream answers with source citations. It also exposes GitHub pull-request tools and repository search as MCP servers, providing the building blocks for an agent-assisted code-review workflow.
+RepoMind is a Python backend for repository-aware code assistance. It connects GitHub repositories, clones and indexes their source, retrieves relevant code with lexical and vector search, and streams LLM answers with citations. It also has standalone MCP servers for GitHub pull-request operations and repository search. The planned next step is a LangGraph agent that combines these capabilities, followed by HTTP/SSE integration, authentication, frontend, and evaluation.
 
-### Current implementation requirements
+### Requirements evidenced by current code
 
-- Serve an HTTP API with health, repository connection/status, and question-answering routes.
-- Associate repositories with users and scope repository access/search by user.
-- Retrieve code context with hybrid BM25 and vector search.
-- Stream generated answers and return file/line citations.
-- Provide MCP tools for reading a pull-request diff, posting an inline review comment, and searching indexed repository code.
-- Run the backend with PostgreSQL, Redis, and Qdrant services through Docker Compose.
+- HTTP health, repository connect/list/status, and question-answering routes.
+- Per-user repository ownership and search scoping.
+- Source filtering/chunking, BM25 and vector retrieval, and streamed Groq answers with citations.
+- MCP tools to read a PR diff, post an inline review comment, and search indexed repository code.
+- PostgreSQL, Redis, and Qdrant services configured through Docker Compose.
 
-These are requirements evidenced by existing implementation, dependencies, configuration, and tests; no independent product specification is tracked.
+These are inferred from implementation and tests; no independent product requirements specification is tracked.
 
 ## Repository structure
 
@@ -28,7 +27,7 @@ These are requirements evidenced by existing implementation, dependencies, confi
 | `backend/app/core/` | Settings, database session, logging, and Fernet token encryption helpers. |
 | `backend/app/models/` | SQLAlchemy `User` and `Repo` models and shared base. |
 | `backend/app/schemas/` | Pydantic request/response models. |
-| `backend/app/rag/` | GitHub API access, clone/fetch, source filtering/chunking, embeddings, Qdrant and BM25 indexing, and hybrid retrieval. |
+| `backend/app/rag/` | GitHub API access, cloning, source filtering/chunking, embeddings, Qdrant/BM25 indexing, and hybrid retrieval. |
 | `backend/app/mcp_servers/` | Standalone GitHub and repository-search MCP servers. |
 | `backend/app/mcp_client/` | MCP server connection and tool-loading cache. |
 | `backend/alembic/` | Database migration environment and initial schema migration. |
@@ -37,213 +36,220 @@ These are requirements evidenced by existing implementation, dependencies, confi
 | `backend/Dockerfile`, `docker-compose.yml` | Container image and local service topology. |
 | `.env.example` | Environment variable template. |
 
-There is currently no tracked frontend, OAuth route, agent workflow, or API route for invoking the MCP tools.
+There is no tracked frontend, OAuth route, LangGraph agent, review API, webhook endpoint, or API invocation of the MCP tools.
 
 ## Completed phases
 
-### Phase 1 — Backend foundation
+### Phase 1 - Backend foundation
 
 **Evidence:** Initial project commit `219925b` (2026-10-11).
 
 - Created the FastAPI application and health endpoint.
 - Added settings, async SQLAlchemy database setup, structured logging, and Fernet token encryption/decryption helpers.
-- Defined `User` and `Repo` persistence models, including a unique per-user repository constraint and a cascading user/repository relationship.
-- Added the initial Alembic migration for those tables.
+- Defined `User` and `Repo` persistence models, including a unique per-user repository constraint and cascading relationship.
+- Added the initial Alembic migration.
 - Added Docker Compose services for the API, PostgreSQL, Redis, and Qdrant, plus a Python 3.11 backend image.
 
-**Boundary:** Authentication flows and user provisioning are not present in this phase's implementation; persisted users are expected by later endpoints.
+**Boundary:** Authentication flows and user provisioning are not implemented; later endpoints expect persisted users.
 
-### Phase 2 — Repository ingestion and hybrid RAG
+### Phase 2 - Repository ingestion and hybrid RAG
 
 **Evidence:** Commit `e90811e` (2026-10-20).
 
-- Added repository connect/list/status endpoints. Connecting validates repository metadata through GitHub and schedules indexing with FastAPI background tasks.
-- Implemented shallow GitHub clone/fetch, file exclusions and size limits, source-language detection, and chunking (Python AST-aware; line-window fallback for other supported file types).
+- Added repository connect/list/status endpoints. Connect validates repository metadata and schedules in-process background indexing.
+- Implemented shallow GitHub clone/fetch, source file exclusions and size limits, language detection, Python AST-aware chunking, and line-window fallback chunking.
 - Added FastEmbed embeddings, Qdrant vector storage, and a per-user/per-repository local BM25 index.
 - Implemented reciprocal-rank fusion for hybrid search.
-- Added `POST /ask`: checks that the requested repository belongs to the current user and is indexed, retrieves context, streams Groq response tokens over SSE, and returns source citations.
+- Added `POST /ask`: checks ownership and index readiness, retrieves context, streams Groq tokens over SSE, and returns source citations.
 - Added tests for chunking, retrieval fusion, and ask-stream events.
 
-**Boundary:** The current user dependency is a development shim using `X-Dev-User` as a GitHub numeric ID. Repository indexing is an in-process background task; Redis is configured as a service but no task queue integration is present.
+**Boundary:** `X-Dev-User` supplies a numeric GitHub ID as a development identity shim. Indexing uses FastAPI background tasks; Redis is configured but not used as a queue.
 
-### Phase 3 — MCP tools and host client
+### Phase 3 - MCP tools and host client
 
 **Evidence:** Commit `da3cc7d` (2026-10-26), branch `feature/mcp-servers`.
 
-- Added a GitHub MCP server with `get_diff` and `post_review_comment` tools.
-- Added a repository-search MCP server with user-scoped `search_code`.
-- Added an MCP client that attempts to load each server independently, caches the resulting tools/connection status, and tolerates a server being unavailable.
-- Added tests for structured GitHub errors, empty comment rejection, repository-not-ready handling, and MCP startup with servers unavailable.
+- Added GitHub MCP tools `get_diff` and `post_review_comment`.
+- Added repository-search MCP tool `search_code`, scoped by user.
+- Added an MCP client that loads each server independently and caches available tools/connection status.
+- Added tests for structured GitHub errors, empty comment rejection, repository-not-ready handling, and unavailable MCP servers.
 
-**Boundary:** Tool servers and the host-side loader exist, but no current API route or agent workflow calls `load_tools()` or uses the loaded tools to perform an end-to-end review.
+**Boundary:** MCP tools and a client loader exist, but no API or agent calls `load_tools()` or conducts an end-to-end review. The GitHub server currently takes a token as a tool argument; the supplied plan places its secure transport migration in Phase 5.
 
 ## Current status
 
-**Development stage:** Phase 3 implementation is the latest committed phase; Phase 4 has not yet been implemented. The repository is a backend foundation with ingestion, hybrid retrieval, streaming RAG Q&A, and standalone MCP tools. The next integration step is to orchestrate those tools into a user-authorized agent workflow.
+**Latest implemented phase: Phase 3.** Phase 4 has not started. The next work is the LangGraph agent layer, not a new HTTP route.
 
-Current surfaces and gaps:
-
-- Registered HTTP routes are `/health`, `/repos`, `/repos/{repo_id}/status`, and `/ask`.
-- Repository access checks use the database user ID. In the current development shim, the client supplies that user's GitHub ID in `X-Dev-User`.
-- GitHub OAuth settings exist, but no OAuth endpoints or callback flow are implemented.
-- `load_tools()` is implemented but not referenced by the API or another workflow.
-- The Groq model is used directly by `/ask`; the configured MCP tools are not currently available to it.
-- The GitHub MCP server can post an external inline review comment, but no review orchestration, approval gate, or API integration is implemented.
-- The tracked test suite covers selected units and endpoint behavior; it does not establish full end-to-end, OAuth, deployment, or live-provider behavior.
-- `frontend/` is not present in tracked files. The `.gitignore` mentions `frontend/.env.local` as a future Phase 7 artifact.
+- Current routes: `/health`, `/repos`, `/repos/{repo_id}/status`, and `/ask`.
+- Current-user dependency uses `X-Dev-User`; GitHub OAuth settings exist, but OAuth routes/callback are absent.
+- `/ask` calls Groq directly; MCP tools are not currently exposed to an agent.
+- No review orchestration, graph interrupt/resume, review API, comment approval flow, or webhook exists.
+- `Repo` has no `indexed_sha` field yet.
+- Existing tests cover selected units and endpoint behavior, not end-to-end provider, OAuth, deployment, or full workflow behavior.
+- `frontend/` is absent; `.gitignore` mentions a future frontend environment file.
 
 ## Remaining phases
 
-The phase descriptions below distinguish repository-backed anchors from recommendations. The source code itself does not define a complete, approved plan for Phases 4 onward.
+Phase definitions below follow the supplied roadmap. Phases 4-8 are targets, not claims about current implementation.
 
-### Phase 4 — Agent orchestration and assisted code review (next)
+### Phase 4 - LangGraph agent (graph only; no HTTP changes)
 
-**Basis:** Phase 3 provides standalone MCP tools and a cached loader; `langgraph`, `langchain`, and `langchain-mcp-adapters` are declared dependencies. No current API or agent invokes the tools. The following is the proposed implementation specification for the next phase, not a claim that the workflow already exists.
+**Objective:** Implement ask and PR-review agent graphs as internal backend capabilities. Phase 4 does not add/change HTTP routes, post GitHub comments, or migrate the GitHub MCP transport.
 
-#### Objective
+#### 4.1 Version and checkpointer audit (first task)
 
-Deliver a backend workflow that reviews a pull request using its GitHub diff and, when available, relevant context from the user's indexed repository. Return review findings with defensible source locations. Make posting comments a separate, explicit, user-approved action. This phase builds on the existing development identity dependency; it must not make Phase 6 authentication harder to adopt.
+1. Inspect available/resolvable versions of `langgraph` and `langgraph-checkpoint-postgres`; the current requirements list them without pins.
+2. Select a compatible pair and pin exact compatible versions in `backend/requirements.txt`.
+3. Verify `interrupt()`/`Command(resume=...)`, `astream_events` v2, and `AsyncPostgresSaver` setup/resume semantics against those versions. Do not rely on behavior from a different LangGraph major version.
+4. Verify the checkpointer schema/setup against PostgreSQL. If a database migration is needed, derive it from the selected checkpointer package's schema rather than hand-authoring an assumed version-specific schema.
 
-#### Scope and boundaries
+#### 4.2 Deliverables
 
-**In scope**
+| Deliverable | Responsibility |
+|---|---|
+| `backend/app/agents/state.py` | `AgentState` TypedDict: `user_id`, `repo_id`, `thread_id`, `mode`, `input`, `messages`, `context`, `draft`, `critique`, `retries`, `final`, `review_comments`, `low_confidence`. Use an appropriate message reducer. **No token field.** |
+| `backend/app/agents/nodes.py` | Router, retriever, agent, critic, and finalize nodes plus deterministic validation. |
+| `backend/app/agents/graph.py` | Graph assembly, ask/review edges, retry path, and review interrupt. |
+| `backend/app/agents/checkpointer.py` | `AsyncPostgresSaver` lifecycle and supported idempotent setup. |
+| `backend/app/agents/runner.py` | `run_ask`, `run_review`, `resume_review`, and typed `astream_events` v2 helper. Internal runner only; not HTTP. |
+| `Repo.indexed_sha` and migration | Persist the commit SHA actually indexed for a repository. |
+| Indexer update | After clone/fetch, run `git rev-parse HEAD` and store that SHA with the index metadata. |
+| Tests | Direct runner/graph tests with mocked LLM, MCP, and checkpoint behavior; no HTTP tests required for Phase 4. |
 
-- An authenticated/current-user-scoped review request and review result contract.
-- Orchestration connecting the current user, owned repository, GitHub diff, MCP repository search, and the configured Groq model.
-- Structured findings, location validation, analysis-only results, and a separately authorized comment-post operation.
-- Progress/error reporting and deterministic tests using mocked providers.
+#### 4.3 Node and graph behavior
 
-**Not in scope**
+1. **Router:** Classify ask vs review only when `mode` was not already supplied. If mode is known, bypass model classification.
+2. **Retriever:** Use hybrid retrieval scoped by `user_id` and `repo_id`. Review mode should use changed files in the diff to guide context retrieval.
+3. **Agent:** Use configured Groq model and MCP tools as graph capabilities. The Phase 3 `get_diff(owner, repo, pr_number, token)` signature remains unchanged during Phase 4. Tests use a placeholder token and mocked tools; this is test scaffolding, not production credential guidance. Moving credentials outside model-visible tool arguments is Phase 5.
+4. **Critic:** Use structured output, e.g. Pydantic `CriticOutput(passed, critique, low_confidence)`, and verify the selected Groq model supports the chosen structured-output method. Limit retries to one.
+5. **Finalize:** Perform deterministic, zero-LLM validation:
+   - For each citation in `final`, require `(path, start_line, end_line)` to exist in `state.context`. Drop ungrounded citations and mark `low_confidence=True`.
+   - For every review comment, require `(path, line)` to match an added (`+`) line parsed from the diff. Drop invalid locations.
+6. **Review graph:** Pause at `interrupt()` before final review completion. `run_review` returns `thread_id` and pending state; it does not post anything to GitHub. `resume_review` exercises the chosen LangGraph resume semantics from the runner/tests, not an HTTP endpoint.
+7. **Ask runner:** Preserve the expected Phase 2 ask event sequence through the internal runner so Phase 5 can expose a compatible SSE stream.
 
-- Implementing GitHub OAuth or replacing `X-Dev-User` (Phase 6).
-- Building the frontend or its approval UI (Phase 7); Phase 4 must nevertheless expose an API that can support explicit approval.
-- Replacing the existing indexing system, adding a durable queue, or broad production hardening (Phase 5).
-- Automatically approving, merging, pushing commits, or posting comments as a side effect of merely requesting a review.
+#### 4.4 Implementation order
 
-#### Proposed user flow
+1. Finish version/checkpointer compatibility audit and pin dependencies.
+2. Add `indexed_sha` to model and migration; update indexer to persist the fetched commit SHA.
+3. Define state and structured critic output; test the types and validation helpers.
+4. Implement router/retriever/agent/critic/finalize nodes.
+5. Assemble graph, one-retry path, review interrupt, and checkpointer lifecycle.
+6. Implement runner functions and typed event helper.
+7. Add mocked tests, run focused tests and full backend suite, and document dependency/version decisions.
 
-1. The caller requests a review for a connected repository and pull-request number. The workflow resolves the caller through `get_current_user`, verifies the repository belongs to that user, and obtains the credential associated with that user.
-2. The workflow fetches the PR diff using `get_diff`. If repository context is used, it verifies the index is `ready` and searches through the existing user-scoped `search_code` tool.
-3. The model analyzes the diff and supporting context and returns structured findings. The service validates each finding against changed files/lines in the diff and prepares a preview. This step performs no GitHub write.
-4. The caller receives the preview. A distinct confirmation request submits the selected findings for posting. The server rechecks ownership and authorization, validates the selected findings again, then calls `post_review_comment` for each approved finding.
-5. The workflow reports per-comment success/failure; partial failure must not be presented as complete success. The caller can inspect the resulting GitHub comment links where available.
+#### 4.5 Tests and exit criteria
 
-#### API contract to implement
+- Ask runner emits the expected event sequence; LLM and MCP are mocked.
+- Review runner pauses at interrupt and exposes resumable `thread_id`/pending state; test resume semantics with the pinned LangGraph version.
+- Critic retries at most once.
+- A fabricated citation missing from context is dropped and lowers confidence.
+- A fabricated comment on a line not added in the diff is dropped.
+- No test needs live GitHub, Groq, or Qdrant credentials. No HTTP route or GitHub comment post is added.
+- Migration/indexing tests prove `indexed_sha` persistence.
+- Focused and full backend tests pass.
 
-The exact paths may follow existing naming conventions, but the service must provide the following two distinct operations:
+**Phase 4 is done when** the ask runner streams the agreed events, review pauses/resumes in tests, critic retry is bounded, deterministic validators work, indexed SHA is saved, and there are no `backend/app/api/` changes or GitHub writes in the phase.
 
-| Operation | Suggested route | Request data | Behavior |
-|---|---|---|---|
-| Analyze PR | `POST /repos/{repo_id}/pull-requests/{pr_number}/review` | Optional review instructions; no token, user ID, or arbitrary owner/repository identity supplied by the model. | Performs read-only analysis and returns/streams findings plus an opaque review identifier if confirmation is a separate call. |
-| Post approved findings | `POST /repos/{repo_id}/pull-requests/{pr_number}/review/{review_id}/comments` | The selected finding IDs (or equivalent validated finding references). | Revalidates review ownership, age/state, repository, PR, and diff locations before posting only selected comments. |
+### Phase 5 - HTTP/SSE integration, approval, and webhook
 
-This route shape is a recommendation, not an existing API. Keep route/schema details consistent with the final design and document deviations. Derive `user_id`, GitHub owner/repository, and provider credentials server-side. Never accept a caller-provided `user_id` as proof of identity.
+**Objective:** Expose Phase 4 runners through HTTP, enforce thread ownership, handle GitHub credentials safely, and connect explicit human approval to comment posting.
 
-The analysis result should have a stable, typed shape containing at least:
+#### 5.1 Secure GitHub MCP transport
 
-- Review identifier and repository/PR identity.
-- Findings, each with a stable finding ID, file path, changed line on the new side of the diff, concise title, evidence-based explanation, and severity/category if the model can provide one.
-- Warnings such as unavailable repository index/context, without disguising tool failure as a clean review.
-- Analysis status and whether comments can be posted.
+- Migrate `github_server` from stdio to streamable HTTP.
+- Remove `token` from `get_diff` and `post_review_comment` tool signatures.
+- Pass the user's credential in the MCP HTTP `Authorization` header, not tool arguments, model tool-call messages, or tool-call logs.
+- Repo search may remain stdio while it remains credential-free.
+- Test transport authentication and prove credentials do not enter model-visible schemas, logs, or outputs.
 
-The posting result should include per-finding outcome and GitHub URL/identifier on success. Never echo access tokens or include them in a model prompt, response, log, or persisted review artifact.
+#### 5.2 API, state, and workflow
 
-#### Implementation sequence and dependencies
+1. Add a `threads` table with `thread_id`, `user_id`, `repo_id`, `mode`, `status`, and `created_at` (plus only fields needed by the selected checkpoint design).
+2. Enforce ownership with a database query constrained by both `thread_id` and `user_id`; never infer ownership by parsing an ID prefix.
+3. Add `POST /review` to verify repository access, call `runner.run_review`, persist thread ownership/state, and return a thread ID.
+4. Add `POST /review/{thread_id}/resume` to verify ownership, receive explicit approval and edited/selected comments, and resume the graph. Only after approval, post comments through the authenticated streamable-HTTP MCP client. Report per-comment success/failure.
+5. Add `GET /ask/{thread_id}/stream` and `GET /review/{thread_id}/stream` (or documented equivalent) as SSE adapters over `runner.astream_events`; verify ownership before streaming.
+6. Define API error and event shapes. Do not represent tool/provider failure as successful review output.
 
-1. **Define schemas and workflow states.** Add request/response schemas and enumerate states such as `validating`, `fetching_diff`, `retrieving_context`, `analyzing`, `awaiting_approval`, `posting`, `completed`, and `failed`. Specify which errors are terminal and whether a review is retained for later approval. If approval is a separate request, persist its state and bind it to the current user, repo, PR, and diff revision; do not rely on process-local state for a review that must survive a request boundary.
-2. **Establish the authorization boundary.** Reuse `get_current_user`; query `Repo` by both `repo_id` and `user.id`. Decrypt only the matched user's stored token using `decrypt_token`. Confirm the repository's canonical `full_name` maps to the requested PR. Do not expose token-bearing tool inputs to the model.
-3. **Make MCP tool use safe and explicit.** Load tools through `app/mcp_client/client.py`; verify the required tool is available before use. Wrap/bind tools in application code so trusted values (token, user ID, repo ID, owner/name) come from server-side context rather than model-generated arguments. The model must not be able to select another user's repository or arbitrary credentials. Treat missing-server/tool conditions as explicit workflow errors or documented degraded mode.
-4. **Fetch and interpret the diff.** Call `get_diff` with the connected user's credential. Check its structured `ok`/`error` result, enforce an input-size limit, and parse changed files and new-side line ranges. Reject or clearly report empty, malformed, or oversized diffs. Do not treat a truncated diff as complete; if a bounded input strategy is needed, report what was omitted.
-5. **Retrieve optional repository context.** Query only the verified `repo_id` and current user. If the index is not ready, either continue with diff-only analysis and explicitly mark the missing context, or fail according to the agreed contract; never claim repository context was used when it was not. Keep retrieved snippets bounded and label them as untrusted source data.
-6. **Generate structured findings.** Use the configured model and a constrained output schema/parser. Instruct the model to report only actionable issues evidenced in the diff/context, and to return no finding when evidence is insufficient. Model output is untrusted: validate required fields, lengths, file paths, line numbers, and finding count before returning it.
-7. **Validate comment locations.** Each postable finding must target a changed file and a valid new-side line accepted by GitHub inline review comments. Exclude invalid locations from posting and explain them in the preview; do not silently remap a line. Keep whole-review findings that cannot be anchored available as non-inline findings only if the response contract supports them.
-8. **Separate analysis from side effects.** Analysis must never invoke `post_review_comment`. Require a distinct confirmation request for writes, bind it to an unexpired review owned by the same user and the same repo/PR/diff, allow only selected finding IDs, and prevent replay/duplicate posting. If persistent confirmation state is outside Phase 4 scope, choose and document a safe synchronous confirmation design rather than pretending a preview token is durable.
-9. **Return progress and errors.** Prefer SSE to match `/ask` if the analysis is streamed. Define events for workflow stage, findings/preview, completion, and error; ensure errors are explicit, do not return success-shaped fallbacks, and do not leak secrets/provider response bodies. For comment posting, return per-comment outcomes and distinguish full, partial, and total failure.
-10. **Test and document the workflow.** Add unit and API tests around mocked tools/model, then run the backend suite. Update API documentation or this project guide with the selected routes, request/response shapes, approval semantics, configuration, and remaining limitations.
+#### 5.3 Webhook and operational controls
 
-#### Acceptance criteria
+- Verify `X-Hub-Signature-256` using HMAC and constant-time comparison.
+- Add `webhook_deliveries` keyed by delivery UUID/ID. Deduplicate deliveries atomically; duplicate delivery returns success without rerunning the review.
+- Resolve connected repositories by canonical `repository.full_name`. Unknown repo is a no-op (planned `202`).
+- Start review as the connected repository owner's identity/token, not the webhook sender's identity.
+- Webhook reviews pause for human approval and never post automatically.
+- Add Redis per-user rate limiting, request-ID middleware, and separate liveness/readiness endpoints. Readiness checks required DB, Redis, and Qdrant connectivity.
 
-- An unauthenticated/missing development identity is rejected by the existing dependency; a user cannot review another user's repository by changing IDs.
-- The server derives owner/repository and credentials from the verified database records. Secrets never enter model-visible arguments, responses, or logs.
-- The analysis path obtains and checks the PR diff. Repository search is scoped and only used for a ready index; any degraded diff-only analysis is identified as such.
-- Findings have validated structure and are anchored only to changed files/lines before they are offered as inline comments.
-- Analysis causes zero GitHub write calls. Posting requires a distinct approval action, rechecks the caller and review binding, and posts only the selected validated findings.
-- Missing tools, provider failures, malformed model output, invalid locations, and partial comment failures are visible and accurately represented.
-- Automated tests prove the above without live GitHub, Qdrant, or Groq credentials. Existing tests continue to pass.
-- The API contract and operation are documented sufficiently for a future frontend to implement the review and confirmation flow.
+#### 5.4 Tests and exit criteria
 
-#### Test plan
+- Only the owning user can view/resume a thread.
+- Duplicate delivery IDs do not launch duplicate reviews.
+- Invalid webhook signatures are rejected; unknown repositories are no-op.
+- A webhook/manual review pauses pending approval; unapproved reviews never post.
+- Approved flow posts only selected/edited comments and reports each result.
+- Credential is not model-visible.
+- SSE, rate limit `429`/TTL recovery, request IDs, liveness, and readiness are tested.
 
-- **Authorization:** missing user; malformed user header; unknown user; repo not found; repo owned by another user; mismatched PR/repository.
-- **MCP availability:** GitHub server/tool absent; repository-search server absent with ready/not-ready index; structured `not_found`, `forbidden`, and timeout tool results.
-- **Diff/context:** empty, malformed, and oversized diff; changed-line parsing; missing index; search failure; snippets bounded and correctly attributed.
-- **Model output:** valid findings; no findings; malformed schema; too many/long findings; path traversal or unknown file; unchanged/out-of-range line; unsupported inline location.
-- **Approval and side effects:** analysis never calls comment tool; absent/expired/wrong-user/wrong-repo review cannot post; only selected finding IDs post; duplicate confirmation does not duplicate comments; each tool failure appears in per-comment result.
-- **API behavior:** request validation, expected status/error events, SSE event ordering if streaming, no token leakage, and regression coverage for existing `/ask` behavior.
+### Phase 6 - GitHub OAuth and session authentication
 
-#### Deliverables
+**Objective:** Replace `X-Dev-User` with validated authentication while preserving Phase 5 repository/thread ownership.
 
-- Review request/result and comment-posting schemas.
-- Review orchestration module and API route(s), integrated with the current-user and repository ownership checks.
-- Safe server-bound MCP tool invocation and diff/location validation.
-- Mocked unit/API tests for the acceptance criteria.
-- Updated API/project documentation and an explicit list of deferred Phase 5–7 work.
+#### Decision document before code
 
-**Exit gate:** Phase 4 is complete only when all acceptance criteria pass and a review can be analyzed without side effects, explicitly approved, and posted with per-comment outcomes under the correct user/repository boundary.
+Write `docs/auth-decision.md` and choose a deployment/cookie model:
 
-### Phase 5 — Reliability and operational hardening (recommended)
+- **Model A (recommended in supplied plan):** Same-origin reverse proxy, such as Next.js rewriting `/api/*` to backend. Browser sees one origin; configure a secure HTTP-only cookie with suitable `SameSite=Lax`.
+- **Model B:** Cross-site frontend and API. Requires `SameSite=None; Secure`, credentialed fetches, exact CORS origins with credentials, and CSRF protection (e.g. double-submit token).
 
-**Basis:** This phase is not named in tracked source. It is recommended because indexing currently runs in-process, Redis is configured but unused, external-service integration has limited test coverage, and the API has no documented production-readiness gate.
+Document chosen model, cookie attributes, CORS/proxy, CSRF, local development, and deployment consequences before implementation.
 
-**Tasks**
+#### Implementation and completion criteria
 
-- Decide whether indexing should remain a FastAPI background task or move to durable queue workers; if adopting a queue, integrate Redis rather than leaving it as an unused service.
-- Define retry, duplicate-request, cancellation, and stale-index behavior; persist actionable job status and make failure state observable.
-- Add lifecycle/cleanup behavior for per-repository clones, BM25 files, and Qdrant collections when repositories are disconnected or re-indexed.
-- Add health/readiness checks for the database and search dependencies, plus bounded timeouts and useful error reporting for provider failures.
-- Expand mocked integration tests across connect → index → search → ask/review flows and migration setup.
-- Review operational configuration, logging/secret handling, and container startup dependencies; document how to run tests and diagnose failures.
+- Use a GitHub OAuth App as the supplied plan specifies; document scopes (proposed `read:user`, `repo`) and trade-offs.
+- Implement `/auth/github/login`, `/auth/github/callback`, state validation, identity lookup/upsert, encrypted provider-token storage, and JWT session in an HTTP-only cookie.
+- Treat JWT session refresh separately from GitHub OAuth token refresh. The supplied plan assumes OAuth App tokens do not expire unless revoked; verify actual app/provider settings and do not invent a GitHub token-refresh flow.
+- Replace `X-Dev-User` on protected routes; explicitly identify public auth routes and signed webhook route.
+- Add tests for OAuth errors, state validation, invalid/expired JWT, identity mapping, and cross-user repo/thread/search access.
+- Verify OAuth round-trip in a real browser under the selected cookie model. No protected route works without valid authentication; secrets remain encrypted and server-side.
 
-**Expected outcomes:** Indexing and external-service failures are recoverable and observable; resource cleanup and operational checks have explicit behavior; CI validation covers the critical workflows.
+### Phase 7 - Frontend
 
-### Phase 6 — Replace development identity with GitHub authentication
+**Objective:** Build a browser application against Phase 5 APIs and the Phase 6 cookie decision. No frontend code is currently tracked.
 
-**Repository anchor:** `backend/app/api/deps.py` explicitly describes `X-Dev-User` as a Phase 2 shim to be replaced in Phase 6. GitHub OAuth settings and JWT-related settings/dependencies already exist, but no OAuth routes or token/session flow are implemented.
+- Select and document frontend stack and typed API contract.
+- Implement login, connected repositories, indexing status, Q&A, and PR review pages.
+- Add typed SSE client/hook with reconnect and cleanup; display streamed answer, citations, review state, and errors.
+- Construct source links with `repos.indexed_sha`, e.g. `github.com/{owner}/{repo}/blob/{sha}/{path}#L{start}-L{end}`, so links target indexed code.
+- Support finding preview/edit/selection, explicit approval, and per-comment outcomes; opening a review must not write to GitHub.
+- Follow selected same-origin proxy or cross-site CORS/CSRF model. Keep provider credentials server-side.
+- Add frontend tests and build/type-check.
 
-**Tasks**
+**Phase 7 is done when** a browser user can log in, connect/index a repo, ask and see streamed answers with working links, review a PR, edit/select findings, approve, and see comment outcomes.
 
-- Implement GitHub OAuth sign-in/callback with state validation and an explicit session/token strategy.
-- Resolve authenticated identity to the existing `User` model, create/update user records, and securely persist provider credentials using the existing encryption helpers.
-- Replace `X-Dev-User` in `get_current_user` with validated authentication; reject unauthenticated requests consistently.
-- Define token refresh/revocation/logout behavior and protect browser sessions against CSRF as required by the chosen strategy.
-- Add tests for callback errors, invalid/missing credentials, session expiry, user mapping, and cross-user repository access.
+### Phase 8 - Evaluation and release
 
-**Expected outcomes:** All user-scoped API and MCP operations derive identity from verified credentials, not a caller-controlled development header.
+**Objective:** Measure quality and operational behavior, document decisions, and prepare reproducible deployment. This phase measures quality; deterministic citation/comment validation remains Phase 4 behavior.
 
-### Phase 7 — Frontend
+- Create an evaluation script (proposed `scripts/eval.py`) and a documented evaluation set.
+- Score comment relevance with and without critic using a manual 0-3 rubric for groundedness, actionability, and avoiding nitpicks.
+- Report MCP tool success rate, p50/p95 latency excluding human interrupt wait time, and counts of dropped citations/comments.
+- Document architecture, setup, environment variables, demo flow, evaluation results, and LangGraph version in README.
+- Verify deployment procedure (proposed Docker Compose on VPS/managed host plus Vercel frontend) matches the Phase 6 cookie decision.
+- Verify setup from a fresh clone and document secret/configuration requirements.
 
-**Repository anchor:** `.gitignore` includes future frontend output paths and a `frontend/.env.local` entry labelled for Phase 7. No frontend source, manifest, or build configuration is tracked.
-
-**Tasks**
-
-- Select and document the frontend stack and API/SSE consumption approach before implementation.
-- Build sign-in and connected-repository screens, repository indexing/status feedback, and a Q&A view that renders streamed tokens and citations.
-- Add the Phase 4 review flow, including review findings and explicit confirmation before posting comments.
-- Handle authentication expiry, provider/API errors, empty results, and indexing/review in-progress states.
-- Keep secrets server-side; configure frontend origins and credentials deliberately rather than exposing provider tokens in browser code.
-- Add frontend tests and a build/type-check step; verify API integration against the backend.
-
-**Expected outcomes:** Users can authenticate and use the implemented repository Q&A and review capabilities through a tested interface.
+**Phase 8 is done when** evaluation results are reproducible and reported without unsupported claims, dropped citation/comment counts are measured, and fresh-clone setup, migrations, tests/builds, and deployment steps are verified.
 
 ## Development roadmap
 
-1. **Prepare the local backend.** Create `.env` from `.env.example`; provide non-placeholder application secrets and credentials for the services/features being exercised. Set a reachable `QDRANT_URL` (for Compose networking, the Qdrant service hostname is `qdrant`). Start services with `docker compose up --build`.
-2. **Verify the current baseline.** From `backend`, run `python -m pytest`. Check `/health`, repository connect/index status, and `/ask` with a seeded development user and configured GitHub/Groq/Qdrant services. Do not treat unit tests alone as proof that live services are configured.
-3. **Implement Phase 4 first.** Specify the review API contract, build the orchestration around the existing MCP tools, enforce user/repository scoping and the comment approval boundary, and add mocked tests before live-provider checks.
-4. **Complete Phase 5 hardening.** Choose and implement durable indexing/retry and cleanup semantics; improve health/error behavior; expand workflow-level test coverage and CI validation.
-5. **Implement Phase 6 authentication.** Replace the development header only after OAuth/session behavior and migrations are tested; preserve access isolation throughout the transition.
-6. **Build Phase 7 frontend.** Use the stabilized API and authentication contract; cover Q&A streaming, citations, repository status, and the approved review flow.
-7. **Release readiness.** Run backend and frontend tests/builds, verify migrations from a clean database, exercise user isolation and failure paths, check container startup/readiness, and document required configuration and deployment operations. No separate Phase 8 is defined in the current repository.
+1. **Baseline:** From `backend`, run `python -m pytest` and record existing failures. Ensure PostgreSQL is available for checkpointer verification.
+2. **Phase 4 version audit:** Resolve and pin compatible LangGraph/checkpointer packages; verify interrupt/resume, event streaming, and checkpointer setup before node implementation.
+3. **Phase 4 graph:** Add state, nodes, graph, checkpointer, runners, `indexed_sha`, migration, deterministic validators, and mocked direct-runner tests. No API changes or GitHub writes.
+4. **Phase 4 exit gate:** Verify ask event compatibility, review interrupt/resume, one retry maximum, citation/line validation, indexed SHA persistence, and full test suite.
+5. **Phase 5 HTTP boundary:** Secure MCP transport; add owned threads, review start/resume and SSE, explicit approval/posting, signed/deduplicated webhook, rate limits, request IDs, readiness, and tests.
+6. **Phase 6 auth:** Write cookie decision first, then OAuth/JWT; replace development header and prove cross-user isolation.
+7. **Phase 7 frontend:** Implement user flows against the authenticated API and selected cookie architecture.
+8. **Phase 8 evaluation/release:** Run documented evaluation, verify fresh-clone setup and deployment, and publish accurate architecture/configuration/results.
 
 ## Local validation reference
 
@@ -254,4 +260,4 @@ Set-Location backend
 python -m pytest
 ```
 
-The API container applies Alembic migrations before starting Uvicorn. The sample environment contains placeholders: configure real local values before expecting database, GitHub, Groq, or Qdrant-backed operations to work.
+The API container applies Alembic migrations before starting Uvicorn. The sample environment contains placeholders; configure real local values before expecting database, GitHub, Groq, or Qdrant-backed operations to work. Phase 4 graph tests should mock LLM/MCP calls; PostgreSQL is needed to verify persistent checkpoint behavior.
